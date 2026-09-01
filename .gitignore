@@ -1,0 +1,18 @@
+# Exported weights, regenerate with python/loader.py and python/tokenizer.py
+*.bin
+*.bin.json
+
+# CMake
+build/
+compile_commands.json
+
+# Python
+.my-env/
+__pycache__/
+*.py[cod]
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
