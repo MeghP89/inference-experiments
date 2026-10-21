@@ -92,17 +92,12 @@ class Tokenizer {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
   }
   static bool is_digit(uint8_t c) { return c >= '0' && c <= '9'; }
-  // Treats every non-ASCII byte as a letter. Exact against the reference
-  // tokenizer on prose, but misclassifies Unicode whitespace (notably U+00A0)
-  // and non-ASCII punctuation, which belong to \s and to the symbol run.
-  // Fixing it means decoding UTF-8 and classifying by codepoint range.
+  // Treats every non-ASCII byte as a letter
   static bool is_letter(uint8_t c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80;
   }
 
-  // One step of GPT-2's pre-tokenizer pattern, returning the end offset of the
-  // word starting at i:
-  //   's|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+
+  // One step of GPT-2's pre-tokenizer pattern
   static size_t split(const uint8_t* s, size_t i, size_t n) {
     if (s[i] == '\'' && i + 1 < n) {
       uint8_t c = s[i + 1];
@@ -113,7 +108,7 @@ class Tokenizer {
           return i + 3;
       }
     }
-    // A single leading space binds to the word that follows it.
+    // A single leading space binds to the word that follows it
     size_t j = (s[i] == ' ') ? i + 1 : i;
     if (j < n && is_letter(s[j])) {
       while (j < n && is_letter(s[j])) j++;
@@ -127,7 +122,7 @@ class Tokenizer {
       while (j < n && !is_space(s[j]) && !is_letter(s[j]) && !is_digit(s[j])) j++;
       return j;
     }
-    // Whitespace run. If a non-space follows, the last space belongs to it.
+    // Whitespace run. If a non-space follows, the last space belongs to it
     j = i;
     while (j < n && is_space(s[j])) j++;
     if (j < n && j > i + 1) j--;

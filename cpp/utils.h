@@ -30,8 +30,6 @@ inline void layernorm(float* out, const float* in, const float* w,
   }
 }
 
-// out = in @ w^T + b, with in [T, n_in], w [n_out, n_in], out [T, n_out].
-// b is [n_out], or null for a layer without bias.
 inline void matmul(float* out, const float* in, const float* w, const float* b,
                    int T, int n_in, int n_out) {
   for (int t = 0; t < T; ++t) {
@@ -46,7 +44,7 @@ inline void matmul(float* out, const float* in, const float* w, const float* b,
 }
 
 // GELU in place. GPT-2 was trained with the tanh approximation rather than the
-// erf form; the two differ enough to show up when diffing against PyTorch.
+// erf form
 inline void gelu(float* x, int n) {
   constexpr float kSqrt2OverPi = 0.7978845608028654f;
   for (int i = 0; i < n; ++i) {
@@ -56,7 +54,7 @@ inline void gelu(float* x, int n) {
 }
 
 // Softmax over x[0..n) in place. Shifts by the max first so exp() cannot
-// overflow; the shift cancels out in the ratio.
+// overflow
 inline void softmax(float* x, int n) {
   float max = x[0];
   for (int i = 1; i < n; ++i) if (x[i] > max) max = x[i];
@@ -66,10 +64,7 @@ inline void softmax(float* x, int n) {
   for (int i = 0; i < n; ++i) x[i] *= inv;
 }
 
-// Multi-head causal self-attention. qkv is [T, 3d], each row laid out as
-// Q(d) | K(d) | V(d) with n_head slices of d/n_head inside each third.
-// out is [T, d]; head h writes to out + i*d + h*hd, which is the concatenation.
-// scores is caller-owned scratch of length T.
+// Multi-head causal self-attention
 inline void attention(float* out, const float* qkv, float* scores, int T, int d,
                       int n_head) {
   const int hd = d / n_head;

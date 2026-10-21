@@ -29,7 +29,6 @@ struct Activations {
 };
 
 // Runs the model over ids and leaves the final position's logits in a.logits.
-// Recomputes every position on each call -- there is no KV cache.
 inline void forward(const Model& m, Activations& a, const std::vector<int>& ids) {
   const int d = m.cfg.d_model;
   const int T = static_cast<int>(ids.size());
