@@ -63,9 +63,9 @@ A sidecar `gpt2.bin.json` records names and offsets for debugging.
 
 ## Correctness
 
-Checked against HuggingFace at every stage. Final logits agree to
-`6.9e-05` absolute over the 50257-way vocabulary, and greedy generation matches
-token for token:
+Checked against HuggingFace at every stage. Logits agree to `1.1e-04` absolute
+over the 50257-way vocabulary, and 64 steps of greedy generation match token
+for token:
 
 ```
 The capital of France is the capital of the French Republic, and the capital
@@ -79,7 +79,15 @@ escape hatch for input like that.
 
 ## Performance
 
-About 0.2 s/token for GPT-2 small on one core. Two reasons, both open:
+GPT-2 small, greedy decoding, on a 12-thread Intel Core 7 150U laptop:
 
-- No KV cache, so every step recomputes the whole prefix.
-- `matmul` is scalar and single-threaded.
+| Change | Decode tok/s |
+|---|---|
+| Scalar, single-threaded, no KV cache | 2.95 |
+| KV cache | 33.6 |
+| AVX2 matmul, 4 outputs per pass | 40.9 |
+| Thread pool, one worker per physical core | 60-73 |
+
+Decoding now streams all 498 MB of weights once per token, so it is bound by
+memory bandwidth rather than compute. Set `GPT2_THREADS` to override the
+worker count.
