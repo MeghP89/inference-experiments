@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -27,6 +28,8 @@ int main(int argc, char** argv) {
   std::printf("%s", prompt);
   std::fflush(stdout);
 
+  auto start = std::chrono::steady_clock::now();
+  int generated = 0;
   for (int i = 0; i < n_new; ++i) {
     if (static_cast<int>(ids.size()) >= m.cfg.ctx) break;
     gpt2::forward(m, a, ids);
@@ -34,8 +37,12 @@ int main(int argc, char** argv) {
     ids.push_back(next);
     std::printf("%s", tok.decode({next}).c_str());
     std::fflush(stdout);
+    generated++;
   }
   std::printf("\n");
+
+  double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  std::fprintf(stderr, "%d tokens in %.2fs (%.1f tok/s)\n", generated, secs, generated / secs);
 
   m.close();
   return 0;
