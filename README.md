@@ -29,6 +29,7 @@ Export the weights once:
 ```sh
 cd python
 python loader.py       # gpt2.bin, 498 MB
+python loader.py --fp16  # gpt2-f16.bin, 251 MB, optional
 python tokenizer.py    # tokenizer.bin, 1.1 MB
 ```
 
@@ -87,7 +88,27 @@ GPT-2 small, greedy decoding, on a 12-thread Intel Core 7 150U laptop:
 | KV cache | 33.6 |
 | AVX2 matmul, 4 outputs per pass | 40.9 |
 | Thread pool, one worker per physical core | 60-73 |
+| fp16 weights (`loader.py --fp16`), F16C convert in the matmul | 100-107 |
 
-Decoding now streams all 498 MB of weights once per token, so it is bound by
-memory bandwidth rather than compute. Set `GPT2_THREADS` to override the
-worker count.
+Decoding streams every weight once per token, so it is bound by memory
+bandwidth rather than compute. Storing matmul weights as fp16 halves the bytes
+read per token; activations and accumulation stay fp32. Greedy output still
+matches HuggingFace token for token over 64 steps, with step-0 logits within
+`3.7e-02`. Set `GPT2_THREADS` to override the worker count.
+
+### Against HuggingFace
+
+Same prompt, 128 greedy tokens, same laptop, interleaved runs.
+`python/hf_bench.py` is the baseline: transformers with torch 2.4 CPU at its
+best thread count (2).
+
+| | tok/s | peak RSS | load |
+|---|---|---|---|
+| transformers (fp32) | 35 | 1,236 MB | 0.40 s |
+| this, fp32 | 58-65 | 493 MB | 5 ms |
+| this, fp16 | 102-107 | 259 MB | 5 ms |
+
+```sh
+python python/hf_bench.py "The capital of France is" 128 2
+./cpp/build/gpt2 "The capital of France is" 128 python/gpt2-f16.bin python/tokenizer.bin
+```
