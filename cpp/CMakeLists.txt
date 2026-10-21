@@ -12,3 +12,6 @@ endif()
 add_executable(gpt2 main.cpp)
 target_include_directories(gpt2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(gpt2 PRIVATE -O3 -march=native -ffast-math -Wall -Wextra)
+
+find_package(Threads REQUIRED)
+target_link_libraries(gpt2 PRIVATE Threads::Threads)

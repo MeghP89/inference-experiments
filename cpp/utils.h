@@ -2,11 +2,14 @@
 // so one output is a dot product of two contiguous rows. Nothing allocates.
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
+
+#include "threads.h"
 
 namespace gpt2 {
 
@@ -49,16 +52,18 @@ inline float dot(const float* a, const float* b, int n) {
   return sum;
 }
 
-// Computes 4 outputs per pass so each load of in_row feeds 4 weight rows
-inline void matmul(float* out, const float* in, const float* w, const float* b,
-                   int T, int n_in, int n_out) {
+// Computes outputs [o_begin, o_end) 4 at a time so each load of in_row feeds
+// 4 weight rows
+inline void matmul_range(float* out, const float* in, const float* w,
+                         const float* b, int T, int n_in, int n_out,
+                         int o_begin, int o_end) {
   for (int t = 0; t < T; ++t) {
     const float* in_row = in + t * n_in;
     float* dst = out + t * n_out;
-    int o = 0;
+    int o = o_begin;
 #ifdef __AVX2__
     if (n_in % 8 == 0) {
-      for (; o + 4 <= n_out; o += 4) {
+      for (; o + 4 <= o_end; o += 4) {
         const float* w0 = w + (size_t)o * n_in;
         const float* w1 = w0 + n_in;
         const float* w2 = w1 + n_in;
@@ -79,11 +84,21 @@ inline void matmul(float* out, const float* in, const float* w, const float* b,
       }
     }
 #endif
-    for (; o < n_out; ++o) {
+    for (; o < o_end; ++o) {
       float sum = dot(in_row, w + (size_t)o * n_in, n_in);
       dst[o] = b ? sum + b[o] : sum;
     }
   }
+}
+
+inline void matmul(float* out, const float* in, const float* w, const float* b,
+                   int T, int n_in, int n_out) {
+  constexpr int kChunk = 64;
+  const int n_chunks = (n_out + kChunk - 1) / kChunk;
+  pool().run(n_chunks, [&](int c) {
+    int o_end = std::min(n_out, (c + 1) * kChunk);
+    matmul_range(out, in, w, b, T, n_in, n_out, c * kChunk, o_end);
+  });
 }
 
 // GELU in place. GPT-2 was trained with the tanh approximation rather than the
