@@ -11,12 +11,13 @@
 int main(int argc, char** argv) {
   const char* prompt = argc > 1 ? argv[1] : "The capital of France is";
   const int n_new = argc > 2 ? std::atoi(argv[2]) : 20;
+  const char* model_path = argc > 3 ? argv[3] : "../python/gpt2.bin";
+  const char* tok_path = argc > 4 ? argv[4] : "../python/tokenizer.bin";
 
   gpt2::Model m;
   gpt2::Tokenizer tok;
   std::string err;
-  if (!gpt2::load("../python/gpt2.bin", m, err) ||
-      !tok.load("../python/tokenizer.bin", err)) {
+  if (!gpt2::load(model_path, m, err) || !tok.load(tok_path, err)) {
     std::fprintf(stderr, "load: %s\n", err.c_str());
     return 1;
   }
