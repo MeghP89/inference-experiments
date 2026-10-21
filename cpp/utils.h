@@ -64,29 +64,32 @@ inline void softmax(float* x, int n) {
   for (int i = 0; i < n; ++i) x[i] *= inv;
 }
 
-// Multi-head causal self-attention
-inline void attention(float* out, const float* qkv, float* scores, int T, int d,
-                      int n_head) {
+// Multi-head causal self-attention for n new rows starting at position start.
+// k_cache and v_cache are [max_T, d] and already hold rows up to start + n
+inline void attention(float* out, const float* qkv, const float* k_cache,
+                      const float* v_cache, float* scores, int n, int start,
+                      int d, int n_head) {
   const int hd = d / n_head;
   const float scale = 1.0f / std::sqrt(static_cast<float>(hd));
 
   for (int h = 0; h < n_head; ++h) {
-    for (int i = 0; i < T; ++i) {
-      const float* q = qkv + i * 3 * d + 0 * d + h * hd;
+    for (int i = 0; i < n; ++i) {
+      const float* q = qkv + i * 3 * d + h * hd;
+      const int pos = start + i;
 
-      // Bounding j at i is the causal mask, and cheaper than -inf entries.
-      for (int j = 0; j <= i; ++j) {
-        const float* k = qkv + j * 3 * d + 1 * d + h * hd;
+      // Bounding j at pos is the causal mask
+      for (int j = 0; j <= pos; ++j) {
+        const float* k = k_cache + j * d + h * hd;
         float s = 0.0f;
         for (int e = 0; e < hd; ++e) s += q[e] * k[e];
         scores[j] = s * scale;
       }
-      softmax(scores, i + 1);
+      softmax(scores, pos + 1);
 
       float* dst = out + i * d + h * hd;
       for (int e = 0; e < hd; ++e) dst[e] = 0.0f;
-      for (int j = 0; j <= i; ++j) {
-        const float* v = qkv + j * 3 * d + 2 * d + h * hd;
+      for (int j = 0; j <= pos; ++j) {
+        const float* v = v_cache + j * d + h * hd;
         float wgt = scores[j];
         for (int e = 0; e < hd; ++e) dst[e] += wgt * v[e];
       }
