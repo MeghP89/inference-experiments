@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+#ifdef __F16C__
+#include <immintrin.h>
+#endif
+
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -21,7 +25,7 @@ constexpr size_t kAlign = 64;
 struct Header {
   char magic[8];  // "GPT2CPP\0"
   int32_t version;
-  int32_t dtype;  // 0 = f32
+  int32_t dtype;  // 0 = f32, 1 = f16 matmul weights and wte
   int32_t n_layer;
   int32_t n_head;
   int32_t d_model;
@@ -32,27 +36,40 @@ struct Header {
 #pragma pack(pop)
 static_assert(sizeof(Header) == 40, "header field packing changed");
 
+// A matmul weight, stored as f32 or f16 depending on the export
+struct Weight {
+  const void* data = nullptr;
+  bool f16 = false;
+
+  float at(size_t i) const {
+#ifdef __F16C__
+    if (f16) return _cvtsh_ss(static_cast<const uint16_t*>(data)[i]);
+#endif
+    return static_cast<const float*>(data)[i];
+  }
+};
+
 // Weights for one transformer block, pointing into the mapping.
 // fc_* is mlp.c_fc and fc_proj_* is mlp.c_proj, renamed so the two c_proj
 // weights in a block do not collide.
 struct Layer {
   const float* ln_1_w;      // [d]
   const float* ln_1_b;      // [d]
-  const float* c_attn_w;    // [3d, d]
+  Weight c_attn_w;          // [3d, d]
   const float* c_attn_b;    // [3d]
-  const float* c_proj_w;    // [d, d]
+  Weight c_proj_w;          // [d, d]
   const float* c_proj_b;    // [d]
   const float* ln_2_w;      // [d]
   const float* ln_2_b;      // [d]
-  const float* fc_w;        // [4d, d]
+  Weight fc_w;              // [4d, d]
   const float* fc_b;        // [4d]
-  const float* fc_proj_w;   // [d, 4d]
+  Weight fc_proj_w;         // [d, 4d]
   const float* fc_proj_b;   // [d]
 };
 
 struct Model {
   Header cfg;
-  const float* wte;   // [vocab, d], also the tied output projection
+  Weight wte;         // [vocab, d], also the tied output projection
   const float* wpe;   // [ctx, d]
   std::vector<Layer> layers;
   const float* ln_f_w;  // [d]
@@ -77,17 +94,23 @@ class Cursor {
   Cursor(const uint8_t* base, size_t off, size_t limit)
       : base_(base), off_(off), limit_(limit) {}
 
-  const float* take(size_t n) {
-    off_ = (off_ + kAlign - 1) & ~(kAlign - 1);
-    const float* p = reinterpret_cast<const float*>(base_ + off_);
-    off_ += n * sizeof(float);
-    ok_ &= off_ <= limit_;
-    return p;
+  const float* take(size_t n) { return static_cast<const float*>(take(n, sizeof(float))); }
+
+  Weight weight(size_t n, bool f16) {
+    return {take(n, f16 ? sizeof(uint16_t) : sizeof(float)), f16};
   }
   bool ok() const { return ok_; }
   size_t offset() const { return off_; }
 
  private:
+  const void* take(size_t n, size_t elem) {
+    off_ = (off_ + kAlign - 1) & ~(kAlign - 1);
+    const void* p = base_ + off_;
+    off_ += n * elem;
+    ok_ &= off_ <= limit_;
+    return p;
+  }
+
   const uint8_t* base_;
   size_t off_;
   size_t limit_;
@@ -122,7 +145,12 @@ inline bool load(const char* path, Model& m, std::string& err) {
     err = "bad magic";
     return false;
   }
-  if (m.cfg.version != 1 || m.cfg.dtype != 0) {
+#ifdef __F16C__
+  const int max_dtype = 1;
+#else
+  const int max_dtype = 0;
+#endif
+  if (m.cfg.version != 1 || m.cfg.dtype < 0 || m.cfg.dtype > max_dtype) {
     munmap(map, st.st_size);
     err = "unsupported version/dtype";
     return false;
@@ -132,22 +160,23 @@ inline bool load(const char* path, Model& m, std::string& err) {
   m.map_bytes = st.st_size;
 
   const int d = m.cfg.d_model;
+  const bool f16 = m.cfg.dtype == 1;
   Cursor c(base, kHeaderBytes, st.st_size);
-  m.wte = c.take((size_t)m.cfg.vocab * d);
+  m.wte = c.weight((size_t)m.cfg.vocab * d, f16);
   m.wpe = c.take((size_t)m.cfg.ctx * d);
   m.layers.resize(m.cfg.n_layer);
   for (Layer& l : m.layers) {
     l.ln_1_w = c.take(d);
     l.ln_1_b = c.take(d);
-    l.c_attn_w = c.take((size_t)3 * d * d);
+    l.c_attn_w = c.weight((size_t)3 * d * d, f16);
     l.c_attn_b = c.take(3 * d);
-    l.c_proj_w = c.take((size_t)d * d);
+    l.c_proj_w = c.weight((size_t)d * d, f16);
     l.c_proj_b = c.take(d);
     l.ln_2_w = c.take(d);
     l.ln_2_b = c.take(d);
-    l.fc_w = c.take((size_t)4 * d * d);
+    l.fc_w = c.weight((size_t)4 * d * d, f16);
     l.fc_b = c.take(4 * d);
-    l.fc_proj_w = c.take((size_t)d * 4 * d);
+    l.fc_proj_w = c.weight((size_t)d * 4 * d, f16);
     l.fc_proj_b = c.take(d);
   }
   m.ln_f_w = c.take(d);

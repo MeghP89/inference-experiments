@@ -49,7 +49,7 @@ inline void forward(const Model& m, Activations& a, const std::vector<int>& ids)
 
   for (int i = 0; i < n; ++i)
     for (int j = 0; j < d; ++j)
-      a.x[i * d + j] = m.wte[ids[start + i] * d + j] + m.wpe[(start + i) * d + j];
+      a.x[i * d + j] = m.wte.at((size_t)ids[start + i] * d + j) + m.wpe[(start + i) * d + j];
 
   for (size_t li = 0; li < m.layers.size(); ++li) {
     const Layer& l = m.layers[li];

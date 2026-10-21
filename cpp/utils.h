@@ -9,6 +9,7 @@
 #include <immintrin.h>
 #endif
 
+#include "gpt2.h"
 #include "threads.h"
 
 namespace gpt2 {
@@ -46,15 +47,29 @@ inline float hsum(__m256 v) {
 }
 #endif
 
-inline float dot(const float* a, const float* b, int n) {
+#ifdef __AVX2__
+inline __m256 load8(const float* p) { return _mm256_loadu_ps(p); }
+inline __m256 load8(const uint16_t* p) {
+  return _mm256_cvtph_ps(_mm_loadu_si128(reinterpret_cast<const __m128i*>(p)));
+}
+#endif
+
+inline float to_float(float x) { return x; }
+#ifdef __F16C__
+inline float to_float(uint16_t x) { return _cvtsh_ss(x); }
+#endif
+
+template <typename W>
+inline float dot(const float* a, const W* b, int n) {
   float sum = 0.0f;
-  for (int j = 0; j < n; ++j) sum += a[j] * b[j];
+  for (int j = 0; j < n; ++j) sum += a[j] * to_float(b[j]);
   return sum;
 }
 
 // Computes outputs [o_begin, o_end) 4 at a time so each load of in_row feeds
 // 4 weight rows
-inline void matmul_range(float* out, const float* in, const float* w,
+template <typename W>
+inline void matmul_range(float* out, const float* in, const W* w,
                          const float* b, int T, int n_in, int n_out,
                          int o_begin, int o_end) {
   for (int t = 0; t < T; ++t) {
@@ -64,18 +79,18 @@ inline void matmul_range(float* out, const float* in, const float* w,
 #ifdef __AVX2__
     if (n_in % 8 == 0) {
       for (; o + 4 <= o_end; o += 4) {
-        const float* w0 = w + (size_t)o * n_in;
-        const float* w1 = w0 + n_in;
-        const float* w2 = w1 + n_in;
-        const float* w3 = w2 + n_in;
+        const W* w0 = w + (size_t)o * n_in;
+        const W* w1 = w0 + n_in;
+        const W* w2 = w1 + n_in;
+        const W* w3 = w2 + n_in;
         __m256 s0 = _mm256_setzero_ps(), s1 = _mm256_setzero_ps();
         __m256 s2 = _mm256_setzero_ps(), s3 = _mm256_setzero_ps();
         for (int j = 0; j < n_in; j += 8) {
           __m256 x = _mm256_loadu_ps(in_row + j);
-          s0 = _mm256_fmadd_ps(x, _mm256_loadu_ps(w0 + j), s0);
-          s1 = _mm256_fmadd_ps(x, _mm256_loadu_ps(w1 + j), s1);
-          s2 = _mm256_fmadd_ps(x, _mm256_loadu_ps(w2 + j), s2);
-          s3 = _mm256_fmadd_ps(x, _mm256_loadu_ps(w3 + j), s3);
+          s0 = _mm256_fmadd_ps(x, load8(w0 + j), s0);
+          s1 = _mm256_fmadd_ps(x, load8(w1 + j), s1);
+          s2 = _mm256_fmadd_ps(x, load8(w2 + j), s2);
+          s3 = _mm256_fmadd_ps(x, load8(w3 + j), s3);
         }
         dst[o] = hsum(s0) + (b ? b[o] : 0.0f);
         dst[o + 1] = hsum(s1) + (b ? b[o + 1] : 0.0f);
@@ -91,13 +106,22 @@ inline void matmul_range(float* out, const float* in, const float* w,
   }
 }
 
-inline void matmul(float* out, const float* in, const float* w, const float* b,
+inline void matmul(float* out, const float* in, const Weight& w, const float* b,
                    int T, int n_in, int n_out) {
   constexpr int kChunk = 64;
   const int n_chunks = (n_out + kChunk - 1) / kChunk;
   pool().run(n_chunks, [&](int c) {
-    int o_end = std::min(n_out, (c + 1) * kChunk);
-    matmul_range(out, in, w, b, T, n_in, n_out, c * kChunk, o_end);
+    int o_begin = c * kChunk;
+    int o_end = std::min(n_out, o_begin + kChunk);
+#ifdef __F16C__
+    if (w.f16) {
+      const uint16_t* half = static_cast<const uint16_t*>(w.data);
+      matmul_range(out, in, half, b, T, n_in, n_out, o_begin, o_end);
+      return;
+    }
+#endif
+    const float* full = static_cast<const float*>(w.data);
+    matmul_range(out, in, full, b, T, n_in, n_out, o_begin, o_end);
   });
 }
 
